@@ -1,4 +1,4 @@
-# Determinants of Academic Performance
+# Statistical Analysis of Smartphone Dependence and Academic Performance
 
 ## 1.  Repository Usage and Reproduction Guide
 This repository is structured to facilitate full reproduction of the analysis.
