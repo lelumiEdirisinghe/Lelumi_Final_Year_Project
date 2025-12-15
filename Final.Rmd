@@ -1,0 +1,876 @@
+---
+title: "Comprehensive Analysis"
+author: "Data Analysis Team"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+---
+
+```{r,warning=FALSE}
+library(sjmisc)
+library(ResourceSelection)
+library(pROC)
+library(broom)
+library(dplyr)
+library(kableExtra)
+library(lavaan)
+library(ggplot2)
+library(gridExtra)
+library(reshape2)
+library(psych)
+library(MVN)
+library(openxlsx)
+library(summarytools)
+library(corrplot)
+library(ggpubr)
+library(car)
+library(rstatix)
+library(boot)
+library(tidyr)
+
+```
+
+# 1. Introduction
+
+This comprehensive analysis examines factors influencing academic performance, measured by GPA and ClassGPA. The analysis includes exploratory data analysis, exploratory factor analysis, demographic comparisons, structural equation modeling, and comprehensive assumption checks.
+
+# 2. Data Preparation
+
+```{r}
+# Load the dataset
+data <- read.xlsx("finalDataset.xlsx")
+
+# Display basic information about the dataset
+cat("Dataset dimensions:", dim(data), "\n")
+cat("Variables in dataset:", names(data), "\n\n")
+
+# Create a summary of all variables
+df_summary <- dfSummary(data)
+print(df_summary)
+
+# Separate demographic and academic variables
+demographic_data <- data[, c("Year", "Program", "Gender", "GPA", "ClassGPA")]
+efa_data <- data[, !(names(data) %in% c("Year", "Program", "Gender", "GPA", "ClassGPA"))]
+
+# Handle missing values
+if(any(is.na(efa_data))) {
+  efa_data <- as.data.frame(lapply(efa_data, function(x) {
+    if(any(is.na(x))) {
+      x[is.na(x)] <- mean(x, na.rm = TRUE)
+    }
+    x
+  }))
+  cat("Missing values imputed with column means\n")
+}
+
+# Remove variables with zero or near-zero variance
+variances <- apply(efa_data, 2, var)
+low_var <- which(variances < 0.01)
+if(length(low_var) > 0) {
+  efa_data <- efa_data[, -low_var]
+  cat("Removed", length(low_var), "variables with near-zero variance\n")
+}
+
+cat("Final EFA dataset dimensions:", dim(efa_data), "\n")
+```
+# 3. Exploratory Data Analysis
+
+## 3.1. Descriptive Statistics
+
+```{r}
+# Summary statistics for all variables
+cat("Descriptive statistics for all variables:\n")
+describe_data <- describe(efa_data)
+print(describe_data)
+
+# Correlation matrix
+cor_matrix <- cor(efa_data)
+cat("\nCorrelation matrix:\n")
+print(round(cor_matrix, 2))
+
+# Visualize correlation matrix
+corrplot(cor_matrix, method = "color", type = "upper", 
+         tl.cex = 0.7, tl.col = "black", title = "Correlation Matrix")
+```
+
+
+```{r}
+cor(data$GPA,data$Nomophobia3)
+
+```
+
+## 3.2. Univariate Linear and Logistic Regression
+
+```{r}
+# Prepare ClassGPA as binary variable
+classgpa_binary <- ifelse(demographic_data$ClassGPA == "Yes", 1, 0)
+
+# Perform univariate regressions for each variable
+univariate_results <- data.frame(
+  Variable = character(),
+  GPA_Coef = numeric(),
+  GPA_Pvalue = numeric(),
+  ClassGPA_OR = numeric(),
+  ClassGPA_Pvalue = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for(i in 1:ncol(efa_data)) {
+  var_name <- names(efa_data)[i]
+  
+  # Skip if variable has no variation
+  if(length(unique(efa_data[[var_name]])) < 2) {
+    cat("Skipping variable", var_name, ": no variation\n")
+    next
+  }
+  
+  # Linear regression for GPA
+  lm_model <- lm(demographic_data$GPA ~ efa_data[[var_name]])
+  lm_summary <- summary(lm_model)
+  
+  # Logistic regression for ClassGPA
+  glm_model <- glm(classgpa_binary ~ efa_data[[var_name]], family = binomial)
+  glm_summary <- summary(glm_model)
+  
+  univariate_results <- rbind(univariate_results, data.frame(
+    Variable = var_name,
+    GPA_Coef = lm_summary$coefficients[2, 1],
+    GPA_Pvalue = lm_summary$coefficients[2, 4],
+    ClassGPA_OR = exp(glm_summary$coefficients[2, 1]),
+    ClassGPA_Pvalue = glm_summary$coefficients[2, 4],
+    stringsAsFactors = FALSE
+  ))
+}
+
+# Format results
+univariate_results$GPA_Coef <- round(univariate_results$GPA_Coef, 3)
+univariate_results$GPA_Pvalue <- round(univariate_results$GPA_Pvalue, 3)
+univariate_results$ClassGPA_OR <- round(univariate_results$ClassGPA_OR, 3)
+univariate_results$ClassGPA_Pvalue <- round(univariate_results$ClassGPA_Pvalue, 3)
+
+# Add significance indicators
+univariate_results$GPA_Sig <- ifelse(univariate_results$GPA_Pvalue < 0.001, "***",
+                                    ifelse(univariate_results$GPA_Pvalue < 0.01, "**",
+                                           ifelse(univariate_results$GPA_Pvalue < 0.05, "*", "")))
+
+univariate_results$ClassGPA_Sig <- ifelse(univariate_results$ClassGPA_Pvalue < 0.001, "***",
+                                         ifelse(univariate_results$ClassGPA_Pvalue < 0.01, "**",
+                                                ifelse(univariate_results$ClassGPA_Pvalue < 0.05, "*", "")))
+
+# Display results with suppressed warnings
+suppressWarnings({
+  kable(univariate_results, caption = "Univariate Regression Results") %>%
+    kable_styling(bootstrap_options = c("striped", "hover"))
+})
+```
+
+# Difference of GPA across Demographics
+
+## 1. Load Required Packages
+
+```{r}
+library(dplyr)
+library(ggpubr)
+library(ggplot2)
+library(car)
+library(rstatix)
+library(boot)
+library(tidyr)
+
+```
+## 2. Prepare the Data
+
+```{r}
+gpa_data <- data[, c("GPA", "Gender", "Program", "Year")] %>%
+  mutate(across(c(Gender, Program, Year), as.factor))
+
+```
+
+
+## Boxplots
+
+```{r}
+p_gender <- ggboxplot(gpa_data, x = "Gender", y = "GPA", fill = "Gender", palette = "jco") +
+  stat_compare_means(method = "t.test", label = "p.signif") +
+  theme_minimal()
+
+p_year <- ggboxplot(gpa_data, x = "Year", y = "GPA", fill = "Year", palette = "jco") +
+  stat_compare_means(method = "t.test", label = "p.signif") +
+  theme_minimal()
+
+p_program <- ggboxplot(gpa_data, x = "Program", y = "GPA", fill = "Program", palette = "jco") +
+  stat_compare_means(method = "kruskal.test", label.y = 4.2) +
+  theme_minimal()
+
+ggarrange(p_gender, p_year, p_program, ncol = 3)
+
+```
+
+## Assumption Checks
+
+```{r}
+# Shapiro-Wilk Test by Group
+gpa_data %>% group_by(Gender) %>% shapiro_test(GPA)
+gpa_data %>% group_by(Year) %>% shapiro_test(GPA)
+gpa_data %>% group_by(Program) %>% shapiro_test(GPA)
+
+# Levene’s Test for Homogeneity of Variance
+leveneTest(GPA ~ Gender, data = gpa_data)
+leveneTest(GPA ~ Year, data = gpa_data)
+leveneTest(GPA ~ Program, data = gpa_data)
+
+```
+## Main Tests
+
+```{r}
+# Gender
+t_gender <- t.test(GPA ~ Gender, data = gpa_data)
+wilcox_gender <- wilcox.test(GPA ~ Gender, data = gpa_data)
+t_gender
+
+# Year
+t_year <- t.test(GPA ~ Year, data = gpa_data)
+wilcox_year <- wilcox.test(GPA ~ Year, data = gpa_data)
+wilcox_year
+
+# Program
+anova_program <- kruskal.test(GPA ~ Program, data = gpa_data)
+anova_program
+
+```
+
+## Post Hoc for Program
+
+```{r}
+posthoc_program <- gpa_data %>%
+  dunn_test(GPA ~ Program, p.adjust.method = "none") %>%
+  filter(p < 0.05)
+
+print(posthoc_program)
+
+```
+## Visualize Significant Post Hoc Comparisons
+
+```{r}
+# Use ggpubr with manually defined comparisons
+comparisons <- list(
+  c("CS", "PS"),
+  c("FMIS", "PS")
+)
+
+ggboxplot(gpa_data, x = "Program", y = "GPA", fill = "Program", palette = "jco") +
+  stat_compare_means(comparisons = comparisons, method = "wilcox.test", label = "p.signif") +
+  theme_minimal() +
+  labs(title = "Significant GPA Differences Between Program Groups")
+
+```
+## Bootstrapping
+
+```{r}
+set.seed(345)
+boot_diff_gender <- function(data, indices) {
+  d <- data[indices, ]
+  mean(d$GPA[d$Gender == "Female"]) - mean(d$GPA[d$Gender == "Male"])
+}
+
+set.seed(123)
+boot_gender <- boot(data = gpa_data, statistic = boot_diff_gender, R = 2000)
+
+boot.ci(boot_gender, type = c("perc", "bca"))
+
+```
+```{r}
+set.seed(345)
+library(boot)
+
+# Function to bootstrap mean GPA difference between two programs
+boot_program_diff <- function(data, indices, g1, g2) {
+  d <- data[indices, ]  # Resample with replacement
+  mean(d$GPA[d$Program == g1]) - mean(d$GPA[d$Program == g2])
+}
+
+# Define program pairs
+program_pairs <- list(
+  c("BS", "CS"),
+  c("BS", "FMIS"),
+  c("BS", "PS"),
+  c("CS", "FMIS"),
+  c("CS", "PS"),
+  c("FMIS", "PS")
+)
+
+# Run bootstrap for each pair
+set.seed(123)
+boot_results <- lapply(program_pairs, function(pair) {
+  boot_obj <- boot(data = gpa_data, 
+                   statistic = function(data, i) boot_program_diff(data, i, pair[1], pair[2]),
+                   R = 2000)
+  ci <- boot.ci(boot_obj, type = c("perc", "bca"))
+  
+  list(
+    comparison = paste(pair[1], "vs", pair[2]),
+    estimate = mean(boot_obj$t),
+    perc_CI = ci$percent[4:5],
+    bca_CI = ci$bca[4:5],
+    pval = mean(abs(boot_obj$t) >= abs(mean(boot_obj$t)))  # approximate p-value
+  )
+})
+
+boot_results
+
+boot_table <- do.call(rbind, lapply(boot_results, as.data.frame))
+print(boot_table)
+
+library(ggplot2)
+
+boot_df <- data.frame(
+  comparison = sapply(boot_results, function(x) x$comparison),
+  estimate = sapply(boot_results, function(x) x$estimate),
+  lower = sapply(boot_results, function(x) x$bca_CI[1]),
+  upper = sapply(boot_results, function(x) x$bca_CI[2])
+)
+
+ggplot(boot_df, aes(x = comparison, y = estimate)) +
+  geom_point(size = 3, color = "blue") +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Bootstrapped Mean GPA Differences Across Programs",
+       y = "Mean Difference (GPA)", x = "Comparison")
+
+
+```
+
+# 4. Exploratory Factor Analysis
+
+```{r}
+# Step 1: Check factorability
+cat("KMO Test Results:\n")
+print(KMO(efa_data))
+
+cat("\nBartlett's Test of Sphericity:\n")
+print(cortest.bartlett(cor(efa_data), n = nrow(efa_data)))
+
+# Step 2: Determine number of factors
+cat("\nParallel Analysis:\n")
+parallel <- fa.parallel(efa_data, fm = "minres", fa = "fa")
+nfactors <- parallel$nfact
+cat("Suggested number of factors:", nfactors, "\n")
+
+# Step 3: Perform EFA
+efa_result <- fa(efa_data, nfactors = nfactors, rotate = "oblimin", fm = "minres")
+cat("\nEFA Results:\n")
+print(efa_result$loadings, cutoff = 0.3)
+
+# Step 4: Check communalities
+cat("\nCommunalities:\n")
+print(efa_result$communality)
+
+# Step 5: Check model fit
+cat("\nFactor Analysis Fit Indices:\n")
+print(efa_result$fit)
+
+# Step 6: Visualize factor structure
+fa.diagram(efa_result, main = "Factor Structure")
+```
+
+# 5. Demographic Differences in Factor Scores
+
+```{r}
+# Extract factor scores
+factor_scores <- factor.scores(efa_data, efa_result)$scores
+colnames(factor_scores) <- paste0("Factor", 1:ncol(factor_scores))
+
+# Combine with demographic data
+analysis_data <- cbind(demographic_data, factor_scores)
+
+# Convert ClassGPA to binary
+analysis_data$ClassGPA_binary <- ifelse(analysis_data$ClassGPA == "Yes", 1, 0)
+
+# Check for differences by Year
+cat("Differences in factor scores by Year:\n")
+for(i in 1:ncol(factor_scores)) {
+  factor_name <- colnames(factor_scores)[i]
+  anova_result <- aov(analysis_data[[factor_name]] ~ Year, data = analysis_data)
+  cat("\n", factor_name, ":\n")
+  print(summary(anova_result))
+  
+  # Post-hoc test if significant
+  if(summary(anova_result)[[1]]$"Pr(>F)"[1] < 0.05) {
+    cat("Post-hoc Tukey test:\n")
+    print(TukeyHSD(anova_result))
+  }
+}
+
+# Check for differences by Program
+cat("\nDifferences in factor scores by Program:\n")
+for(i in 1:ncol(factor_scores)) {
+  factor_name <- colnames(factor_scores)[i]
+  anova_result <- aov(analysis_data[[factor_name]] ~ Program, data = analysis_data)
+  cat("\n", factor_name, ":\n")
+  print(summary(anova_result))
+  
+  # Post-hoc test if significant
+  if(summary(anova_result)[[1]]$"Pr(>F)"[1] < 0.05) {
+    cat("Post-hoc Tukey test:\n")
+    print(TukeyHSD(anova_result))
+  }
+}
+
+# Check for differences by Gender
+cat("\nDifferences in factor scores by Gender:\n")
+for(i in 1:ncol(factor_scores)) {
+  factor_name <- colnames(factor_scores)[i]
+  t_test <- t.test(analysis_data[[factor_name]] ~ Gender, data = analysis_data)
+  cat("\n", factor_name, ":\n")
+  print(t_test)
+}
+
+# Visualize differences
+for(i in 1:ncol(factor_scores)) {
+  factor_name <- colnames(factor_scores)[i]
+  
+  p1 <- ggplot(analysis_data, aes(x = Year, y = .data[[factor_name]], fill = Year)) +
+    geom_boxplot() +
+    labs(title = paste(factor_name, "by Year")) +
+    theme_minimal()
+  
+  p2 <- ggplot(analysis_data, aes(x = Program, y = .data[[factor_name]], fill = Program)) +
+    geom_boxplot() +
+    labs(title = paste(factor_name, "by Program")) +
+    theme_minimal()
+  
+  p3 <- ggplot(analysis_data, aes(x = Gender, y = .data[[factor_name]], fill = Gender)) +
+    geom_boxplot() +
+    labs(title = paste(factor_name, "by Gender")) +
+    theme_minimal()
+  
+  grid.arrange(p1, p2, p3, ncol = 3)
+}
+```
+
+
+# 9.  Path Analysis
+
+
+```{r}
+# Load required libraries
+library(psych)
+library(lavaan)
+library(car)
+library(MVN)
+library(ggplot2)
+library(reshape2)
+
+# ================================
+# STEP 1–6: EFA PROCESS
+# ================================
+cat("KMO Test Results:\n")
+print(KMO(efa_data))
+
+cat("\nBartlett's Test of Sphericity:\n")
+print(cortest.bartlett(cor(efa_data), n = nrow(efa_data)))
+
+cat("\nParallel Analysis:\n")
+parallel <- fa.parallel(efa_data, fm = "minres", fa = "fa")
+nfactors <- 3
+cat("Suggested number of factors:",nfactors , "\n")
+
+efa_result <- fa(efa_data, nfactors = nfactors, rotate = "oblimin", fm = "minres")
+cat("\nEFA Results:\n")
+print(efa_result$loadings, cutoff = 0.3)
+
+cat("\nCommunalities:\n")
+print(efa_result$communality)
+
+cat("\nFactor Analysis Fit Indices:\n")
+print(efa_result$fit)
+
+fa.diagram(efa_result, main = "Factor Structure")
+
+# ================================
+# STEP 7: Generate Factor Scores
+# ================================
+# Select only well-loading items per factor
+selected_items <- c("Nomophobia1", "Nomophobia2", "Nomophobia3", "Nomophobia4", "Nomophobia5", 
+                    "Subjective_sleep_quality", "Sleep_disturbance", "Sleep_onset_latency", "Night_sleep_hours",
+                    "Studytime_phone_check_frequency", "Studytime_notification_distraction", "Independent_learning_hours")
+
+efa_data_filtered <- efa_data[, selected_items]
+
+# Rerun EFA on only selected items
+efa_result <- fa(efa_data_filtered, nfactors = 3, rotate = "oblimin", fm = "minres")
+
+# Recompute factor scores from filtered model
+factor_scores <- factor.scores(efa_data_filtered, efa_result, method = "regression")$scores
+
+# ================================
+# STEP 8: Data Preparation
+# ================================
+path_data <- cbind(factor_scores, demographic_data[, c("GPA", "Year", "Program", "Gender")])
+path_data$ClassGPA_binary <- ifelse(path_data$GPA >= 3.0, 1, 0)
+
+path_data$Year <- as.numeric(as.factor(path_data$Year)) - 1
+path_data$Gender <- as.numeric(as.factor(path_data$Gender)) - 1
+path_data$Program <- as.factor(path_data$Program)
+program_dummies <- model.matrix(~ Program - 1, data = path_data)[, -1]
+colnames(program_dummies) <- paste0("Program_", levels(path_data$Program)[-1])
+path_data <- cbind(path_data, program_dummies)
+
+# ================================
+# STEP 9: PATH ANALYSIS (GPA)
+# ================================
+predictors <- c(colnames(factor_scores), "Year", "Gender", colnames(program_dummies))
+path_model_gpa <- paste0("GPA ~ ", paste(predictors, collapse = " + "))
+
+fit_gpa <- sem(path_model_gpa, data = path_data)
+summary(fit_gpa, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE)
+
+# ================================
+# STEP 10: PATH ANALYSIS (ClassGPA)
+# ================================
+path_model_classgpa <- paste0("ClassGPA_binary ~ ", paste(predictors, collapse = " + "))
+
+fit_classgpa <- sem(path_model_classgpa, data = path_data,
+                    ordered = "ClassGPA_binary", estimator = "WLSMV")
+summary(fit_classgpa, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE)
+
+# ================================
+# STEP 11: Assumption Checks
+# ================================
+cat("\nMultivariate Normality:\n")
+mvn_res <- mvn(path_data[, colnames(factor_scores)], mvnTest = "hz")
+print(mvn_res$multivariateNormality)
+
+cat("\nMulticollinearity (VIF):\n")
+vif_model <- lm(GPA ~ ., data = path_data[, c("GPA", predictors)])
+print(vif(vif_model))
+
+cat("\nOutlier Detection:\n")
+mahal <- mahalanobis(path_data[, colnames(factor_scores)],
+                     colMeans(path_data[, colnames(factor_scores)]),
+                     cov(path_data[, colnames(factor_scores)]))
+outliers <- which(pchisq(mahal, df = nfactors) > 0.999)
+cat("Potential multivariate outliers (p > 0.999):", length(outliers), "\n")
+
+# ================================
+# STEP 12: Visualization of Coefficients
+# ================================
+get_coefs_plot <- function(fit, model_name) {
+  std <- standardizedSolution(fit)
+  std <- std[std$op == "~", c("lhs", "rhs", "est.std", "pvalue")]
+  colnames(std) <- c("Outcome", "Predictor", "Std_Coefficient", "P_Value")
+  std$Model <- model_name
+  std$Significance <- ifelse(std$P_Value < 0.05, "Significant", "Not Significant")
+  return(std)
+}
+
+coef_gpa <- get_coefs_plot(fit_gpa, "GPA")
+coef_classgpa <- get_coefs_plot(fit_classgpa, "ClassGPA")
+
+coef_all <- rbind(coef_gpa, coef_classgpa)
+
+ggplot(coef_all, aes(x = reorder(Predictor, Std_Coefficient), y = Std_Coefficient,
+                     fill = Significance)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~Model) +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Standardized Path Coefficients", x = "Predictor", y = "Standardized Coefficient") +
+  scale_fill_manual(values = c("Significant" = "steelblue", "Not Significant" = "gray70")) +
+  theme_minimal(base_size = 13)
+
+# ================================
+# STEP 13: Save or Export (Optional)
+# ================================
+# saveRDS(fit_gpa, "fit_path_gpa.rds")
+# saveRDS(fit_classgpa, "fit_path_classgpa.rds")
+
+```
+
+## Nomophobia
+
+```{r}
+# Extract the loadings matrix as a data frame
+loadings_matrix <- as.data.frame(efa_result$loadings[1:ncol(efa_data_filtered), ])
+
+# View only items with absolute loading ≥ 0.30 on MR1
+mr1_items <- loadings_matrix[abs(loadings_matrix$MR1) >= 0.30, "MR1", drop = FALSE]
+
+# Sort items by absolute loading strength
+mr1_items <- mr1_items[order(-abs(mr1_items$MR1)), , drop = FALSE]
+
+# Add item names
+mr1_items$Item <- rownames(mr1_items)
+colnames(mr1_items)[1] <- "Loading_MR1"
+
+# Reorder columns for display
+mr1_items <- mr1_items[, c("Item", "Loading_MR1")]
+
+# Display results
+cat("Items loading on MR1 (Factor 1):\n")
+print(mr1_items, row.names = FALSE)
+
+library(ggplot2)
+
+ggplot(mr1_items, aes(x = reorder(Item, Loading_MR1), y = Loading_MR1)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  geom_hline(yintercept = 0.3, linetype = "dashed", color = "red") +
+  labs(title = "Items Loading on MR1 (Factor 1)",
+       x = "Item", y = "Loading Value") +
+  theme_minimal(base_size = 13)
+
+```
+
+## MLR Path Analysis
+
+```{r}
+# ================================
+# STEP 9: PATH ANALYSIS (GPA) - Using MLR
+# ================================
+predictors <- c(colnames(factor_scores), "Year", "Gender", colnames(program_dummies))
+path_model_gpa <- paste0("GPA ~ ", paste(predictors, collapse = " + "))
+
+fit_gpa <- sem(path_model_gpa, 
+               data = path_data, 
+               estimator = "MLR")  # Use robust maximum likelihood
+
+summary(fit_gpa, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE)
+
+
+# ================================
+# STEP 10: PATH ANALYSIS (ClassGPA) - Using WLSMV for categorical outcome
+# ================================
+path_model_classgpa <- paste0("ClassGPA_binary ~ ", paste(predictors, collapse = " + "))
+
+fit_classgpa <- sem(path_model_classgpa, 
+                    data = path_data,
+                    ordered = "ClassGPA_binary", 
+                    estimator = "WLSMV")  # For categorical DV
+
+summary(fit_classgpa, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE)
+
+
+
+```
+
+### Assumption Check
+
+```{r}
+library(car)
+
+# Build a linear model for visual diagnostics
+linear_model <- lm(GPA ~ ., data = path_data[, c("GPA", predictors)])
+
+# Check linearity via Component + Residual (Partial Residual) Plots
+crPlots(linear_model)
+
+```
+
+### Sample Size Adequacy
+
+```{r}
+# Count total predictors
+n_parameters <- length(predictors)
+
+# Check sample size
+n_obs <- nrow(path_data)
+
+cat("Sample size:", n_obs, "\n")
+cat("Number of predictors:", n_parameters, "\n")
+cat("Ratio (Cases per parameter):", round(n_obs / n_parameters, 2), "\n")
+
+if ((n_obs / n_parameters) >= 10) {
+  cat("✅ Sample size is adequate (≥10 cases per parameter).\n")
+} else {
+  cat("⚠️ Sample size may be insufficient (<10 cases per parameter).\n")
+}
+
+```
+
+### Residual Diagnostics
+
+```{r}
+# Basic residual plots
+par(mfrow = c(2, 2))
+plot(linear_model)
+
+# Histogram and Q-Q plot of residuals
+residuals_std <- rstandard(linear_model)
+hist(residuals_std, main = "Histogram of Standardized Residuals", xlab = "Standardized Residuals")
+qqnorm(residuals_std); qqline(residuals_std)
+
+# Check for influential points (Cook's distance)
+cooksd <- cooks.distance(linear_model)
+plot(cooksd, type = "h", main = "Cook's Distance", ylab = "Distance")
+abline(h = 4 / n_obs, col = "red", lty = 2)
+cat("Observations with Cook's D > 4/n:", sum(cooksd > 4 / n_obs), "\n")
+
+```
+
+### Multicollinearity
+
+```{r}
+cat("\nMulticollinearity (VIF) - Relevant for all estimators:\n")
+vif_model <- lm(GPA ~ ., data = path_data[, c("GPA", predictors)])
+print(vif(vif_model))
+# Check that no VIF > 5 or 10 (depending on threshold)
+
+```
+
+## Bootstrapped Path Analysis
+
+```{r}
+# ================================
+# Load Required Libraries
+# ================================
+library(lavaan)
+library(ggplot2)
+
+# ================================
+# Define Path Model
+# ================================
+predictors <- c(colnames(factor_scores), "Year", "Gender", colnames(program_dummies))
+path_model_gpa <- paste0("GPA ~ ", paste(predictors, collapse = " + "))
+
+# ================================
+# Fit SEM Model with Bootstrapping
+# ================================
+fit_boot <- sem(path_model_gpa,
+                data = path_data,
+                estimator = "ML",         # Robust estimation
+                se = "bootstrap",          # Use bootstrapped standard errors
+                bootstrap = 5000)          # Recommended: ≥5000 resamples
+
+# ================================
+# Summary with Bootstrapped CIs
+# ================================
+summary(fit_boot, 
+        fit.measures = TRUE, 
+        standardized = TRUE, 
+        rsquare = TRUE, 
+        ci = TRUE)
+
+# ================================
+# Extract & Plot Coefficients
+# ================================
+get_boot_coefs_plot <- function(fit, model_name) {
+  std <- standardizedSolution(fit, ci = TRUE)
+  std <- std[std$op == "~", c("lhs", "rhs", "est.std", "ci.lower", "ci.upper", "pvalue")]
+  colnames(std) <- c("Outcome", "Predictor", "Std_Estimate", "CI_Lower", "CI_Upper", "P_Value")
+  std$Model <- model_name
+  std$Significance <- ifelse(std$P_Value < 0.05, "Significant", "Not Significant")
+  return(std)
+}
+
+boot_coefs <- get_boot_coefs_plot(fit_boot, "Bootstrapped GPA")
+
+ggplot(boot_coefs, aes(x = reorder(Predictor, Std_Estimate), y = Std_Estimate,
+                       fill = Significance)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Bootstrapped Standardized Path Coefficients (GPA)",
+       x = "Predictor", y = "Standardized Estimate") +
+  scale_fill_manual(values = c("Significant" = "steelblue", "Not Significant" = "gray70")) +
+  theme_minimal(base_size = 13)
+
+
+
+```
+
+
+## Mediation 
+
+```{r}
+set.seed(123)
+library(lavaan)
+
+# Define the path analysis model with labels
+path_model <- '
+  # Structural regressions with labels
+  MR2 ~ a1*MR1          # MR1 → MR2
+  MR3 ~ a2*MR1          # MR1 → MR3
+  GPA ~ c*MR1 + b1*MR2 + b2*MR3 + Year + Gender + Program_CS + Program_FMIS + Program_PS
+
+  # Indirect effects
+  ind_nomophobia_sleep := a1*b1
+  ind_nomophobia_distraction := a2*b2
+
+  # Total effect of MR1 on GPA
+  total_nomophobia := c + (a1*b1) + (a2*b2)
+'
+
+# Fit the model
+fit_path <- sem(path_model, data = path_data, estimator = "ML", se = "bootstrap", bootstrap = 5000)
+
+# Get results
+summary(fit_path, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE, ci = TRUE)
+
+
+
+```
+
+# Internal Validity
+
+```{r}
+# Load required package
+library(psych)
+
+# ----------------------------------------
+# Step 1: Apply reverse coding (if needed)
+# ----------------------------------------
+
+efa_data_rc <- efa_data  # Copy to preserve original
+
+# Reverse for MR2
+efa_data_rc$Subjective_sleep_quality <- max(efa_data_rc$Subjective_sleep_quality, na.rm = TRUE) - efa_data_rc$Subjective_sleep_quality
+efa_data_rc$Night_sleep_hours <- max(efa_data_rc$Night_sleep_hours, na.rm = TRUE) - efa_data_rc$Night_sleep_hours
+
+# Reverse for MR3
+efa_data_rc$Independent_learning_hours <- max(efa_data_rc$Independent_learning_hours, na.rm = TRUE) - efa_data_rc$Independent_learning_hours
+
+# ----------------------------------------
+# Step 2: Define item groupings
+# ----------------------------------------
+
+items_MR1 <- c("Nomophobia1", "Nomophobia2", "Nomophobia3", "Nomophobia4", "Nomophobia5")
+items_MR2 <- c("Subjective_sleep_quality", "Sleep_disturbance", "Sleep_onset_latency", "Night_sleep_hours")
+items_MR3 <- c("Studytime_phone_check_frequency", "Studytime_notification_distraction", "Independent_learning_hours")
+
+factor_items <- list(MR1 = items_MR1, MR2 = items_MR2, MR3 = items_MR3)
+
+# ----------------------------------------
+# Step 3: Compute Omega
+# ----------------------------------------
+
+omega_results <- data.frame(Factor = character(), Omega_Total = numeric(), stringsAsFactors = FALSE)
+
+for (factor in names(factor_items)) {
+  items <- factor_items[[factor]]
+  data_subset <- efa_data_rc[, items]
+  
+  omega_val <- omega(data_subset, nfactors = 1, plot = FALSE)$omega.tot
+  
+  omega_results <- rbind(omega_results,
+                         data.frame(Factor = factor,
+                                    Omega_Total = round(omega_val, 3)))
+}
+
+# ----------------------------------------
+# Step 4: Output Results
+# ----------------------------------------
+
+print(omega_results)
+
+
+
+```
+
