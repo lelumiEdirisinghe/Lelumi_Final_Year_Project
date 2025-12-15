@@ -1,4 +1,4 @@
-# Statistical Analysis of Smartphone Dependence and Academic Performance
+# Digital-Age Challenges in Higher Education
 
 ## 1.  Repository Usage and Reproduction Guide
 This repository is structured to facilitate full reproduction of the analysis.
