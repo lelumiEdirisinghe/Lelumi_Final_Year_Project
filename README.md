@@ -39,7 +39,7 @@ Nomophobia4: Anxiety regarding unchecked notifications (informational anxiety).
 
 Nomophobia5: Discomfort regarding communication latency (social anxiety).
 
-## The Sleep Quality Construct (MR2) 
+### The Sleep Quality Construct (MR2) 
 
 Daytime_sleepiness: Frequency of struggling to stay awake during academic tasks.
 
