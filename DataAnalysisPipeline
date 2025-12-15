@@ -1,6 +1,6 @@
 ---
-title: "Comprehensive Analysis"
-author: "Data Analysis Team"
+title: "Final Data Analysis"
+author: "Lelumi Edirisinghe"
 date: "`r Sys.Date()`"
 output: 
   html_document:
@@ -873,4 +873,5 @@ print(omega_results)
 
 
 ```
+
 
