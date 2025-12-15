@@ -17,7 +17,7 @@ install.packages(c("lavaan", "psych", "MVN", "boot", "tidyverse",
 
 Please make sure finalDataset.xlsx is placed in the project root directory, the Final. Rmd script is configured to look for this file in the working directory.
 
-The script  will automatically perform the cleaning, EFA, and SEM, and generate the summary tables and plots.
+The script  will automatically perform the cleaning, EFA, and Path Analysis, and generate the summary tables and plots.
 
 ## 3. Variables and Latent Constructs
 The core analysis relies on converting observed items into latent factors. The dataset contains item-level data derived from validated instruments.   
