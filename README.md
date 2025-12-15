@@ -1,6 +1,6 @@
 # Determinants of Academic Performance
 
-## Repository Usage and Reproduction Guide
+##1.  Repository Usage and Reproduction Guide
 This repository is structured to facilitate full reproduction of the analysis.
 
 ### System Requirements
@@ -13,14 +13,19 @@ install.packages(c("lavaan", "psych", "MVN", "boot", "tidyverse",
                    "readxl", "summarytools", "corrplot", "car", 
                    "pROC", "sjmisc", "broom", "kableExtra"))
 ```
-## Execution Instructions
+##2.  Execution Instructions
 
 Please make sure finalDataset.xlsx is placed in the project root directory, the Final. Rmd script is configured to look for this file in the working directory.
 
 The script  will automatically perform the cleaning, EFA, and SEM, and generate the summary tables and plots.
 
-## Psychometric Scales and Latent Indicators
+##3. Variables and Latent Constructs
 The core analysis relies on converting observed items into latent factors. The dataset contains item-level data derived from validated instruments.   
+
+### Demographic Stratification Variables
+Year: Academic year
+Program: Degree track
+Gender
 
 ### The Nomophobia Construct (MR1) 
 
