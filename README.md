@@ -24,7 +24,9 @@ The core analysis relies on converting observed items into latent factors. The d
 
 ### Demographic Stratification Variables
 Year: Academic year
+
 Program: Degree track
+
 Gender
 
 ### The Nomophobia Construct (MR1) 
