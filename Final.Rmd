@@ -687,9 +687,9 @@ cat("Number of predictors:", n_parameters, "\n")
 cat("Ratio (Cases per parameter):", round(n_obs / n_parameters, 2), "\n")
 
 if ((n_obs / n_parameters) >= 10) {
-  cat("✅ Sample size is adequate (≥10 cases per parameter).\n")
+  cat(" Sample size is adequate (≥10 cases per parameter).\n")
 } else {
-  cat("⚠️ Sample size may be insufficient (<10 cases per parameter).\n")
+  cat(" Sample size may be insufficient (<10 cases per parameter).\n")
 }
 
 ```
@@ -873,5 +873,6 @@ print(omega_results)
 
 
 ```
+
 
 
