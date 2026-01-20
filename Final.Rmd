@@ -814,7 +814,12 @@ fit_path <- sem(path_model, data = path_data, estimator = "ML", se = "bootstrap"
 # Get results
 summary(fit_path, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE, ci = TRUE)
 
+# Calculate modification indices
+# sort. = TRUE puts the largest indices (biggest improvements) at the top
+mod_indices <- modificationIndices(fit_path, sort. = TRUE)
 
+# View the top 10 suggested modifications
+head(mod_indices, 10)
 
 ```
 
@@ -873,6 +878,7 @@ print(omega_results)
 
 
 ```
+
 
 
 
