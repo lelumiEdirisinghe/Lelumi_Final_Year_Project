@@ -363,7 +363,7 @@ nfactors <- parallel$nfact
 cat("Suggested number of factors:", nfactors, "\n")
 
 # Step 3: Perform EFA
-efa_result <- fa(efa_data, nfactors = nfactors, rotate = "oblimin", fm = "minres")
+efa_result <- fa(efa_data, nfactors = 3, rotate = "oblimin", fm = "minres")
 cat("\nEFA Results:\n")
 print(efa_result$loadings, cutoff = 0.3)
 
@@ -873,6 +873,7 @@ print(omega_results)
 
 
 ```
+
 
 
 
